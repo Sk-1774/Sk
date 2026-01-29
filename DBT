@@ -1,0 +1,327 @@
+Got it 🙂
+Below is a **clean, detailed, manager-ready architecture document** that explains **your current dbt execution setup end-to-end**, written in a way that **shows clarity, ownership, and technical depth**.
+You can paste this directly into Confluence / Word / Google Docs.
+
+---
+
+# 📘 Current dbt Execution Architecture – Detailed Explanation
+
+## 1. Overview
+
+The current dbt execution setup is a **custom-built orchestration and execution platform** designed to allow users to run dbt workloads in a controlled, scalable, and secure manner on AWS.
+
+The architecture separates **build time**, **infrastructure provisioning**, and **runtime execution**, and uses managed AWS services to ensure repeatability, isolation, and auditability.
+
+At a high level, the workflow consists of:
+
+1. **Packaging dbt and custom logic into a Docker image**
+2. **Provisioning execution infrastructure using Service Catalog**
+3. **Running dbt workloads on demand using a State Machine and ECS Tasks**
+
+---
+
+## 2. dbt Code and Docker Image Creation (Build Phase)
+
+### 2.1 dbt Codebase
+
+The codebase consists of:
+
+* A standard **dbt Core project** (models, macros, tests, snapshots)
+* A **custom Python wrapper**
+* dbt Athena + AWS Glue adapter
+* Custom logic to integrate **Alation lineage**
+
+The wrapper is responsible for:
+
+* Interpreting execution parameters
+* Running dbt commands in sequence
+* Capturing metadata
+* Posting lineage to Alation
+
+---
+
+### 2.2 Jenkins Pipeline – Image Build
+
+A Jenkins pipeline is responsible for converting the dbt code into a reusable execution artifact.
+
+#### Pipeline steps:
+
+1. **Source Code Checkout**
+
+   * dbt project
+   * Python wrapper
+   * Supporting scripts and configurations
+
+2. **Docker Image Build**
+
+   * Base Python image
+   * Installation of:
+
+     * `dbt-core`
+     * `dbt-athena-adapter`
+     * AWS SDK libraries
+     * Lineage-related dependencies
+   * Copying dbt project and wrapper code into the image
+
+3. **Image Versioning**
+
+   * Image tagged using build number or commit hash
+   * Ensures immutability and traceability
+
+4. **Push to Amazon ECR**
+
+   * Image stored in Elastic Container Registry
+   * Used later during runtime execution
+
+#### Key Point:
+
+> At this stage, **no dbt execution happens**.
+> The output is only a **runtime image** that can be reused for multiple executions.
+
+---
+
+## 3. Service Catalog Product (Provisioning Phase)
+
+### 3.1 Purpose of Service Catalog
+
+The Service Catalog product provides a **self-service way to provision the execution platform** required to run dbt workloads.
+
+This phase is **infrastructure provisioning**, not workload execution.
+
+---
+
+### 3.2 Resources Created by Service Catalog
+
+When a user provisions the product, the following resources are created:
+
+#### Compute & Scheduling
+
+* **Auto Scaling Group (ASG)**
+  Ensures availability of EC2 instances to run container workloads.
+
+* **EC2 Launch Template**
+  Defines AMI, instance type, user data, IAM role, and security groups.
+
+* **EC2 Instances**
+  Act as compute hosts for container execution.
+
+* **ECS Cluster**
+  Logical cluster that manages and schedules container workloads.
+
+---
+
+#### Container Execution
+
+* **ECS Task Definition**
+
+  * References the Docker image from ECR
+  * Defines CPU/memory requirements
+  * Specifies entrypoint and environment variables
+  * Attaches an IAM Task Role
+
+---
+
+#### Orchestration
+
+* **AWS Step Functions State Machine**
+
+  * Accepts execution parameters
+  * Orchestrates ECS task execution
+  * Tracks execution status
+
+---
+
+#### Security & Observability
+
+* **IAM Roles**
+
+  * ECS Task Role (for Athena, Glue, S3 access)
+  * State Machine Role
+* **KMS Keys**
+
+  * Encryption for logs and data
+* **CloudWatch Log Groups**
+
+  * Centralized logs for ECS tasks and State Machine
+* **Security Groups**
+
+  * Control outbound network access
+
+---
+
+### 3.3 What Service Catalog Does NOT Do
+
+* It does **not** execute dbt
+* It does **not** trigger workloads
+* It only prepares a **long-lived execution environment**
+
+Think of this step as:
+
+> “Setting up a private dbt execution platform”
+
+---
+
+## 4. EC2, ECS Cluster, and User Data (Compute Layer)
+
+### 4.1 Role of EC2
+
+EC2 instances act as **raw compute capacity**.
+They:
+
+* Run Docker
+* Host ECS agent
+* Provide CPU and memory for containers
+
+EC2 instances **do not directly run dbt**.
+
+---
+
+### 4.2 Role of ECS Cluster
+
+The ECS Cluster:
+
+* Registers EC2 instances
+* Schedules ECS Tasks
+* Decides where containers should run
+* Tracks container lifecycle
+
+ECS is the **scheduler**, not the compute itself.
+
+---
+
+### 4.3 User Data and Chef Bootstrapping
+
+When an EC2 instance launches:
+
+1. **User Data script runs**
+2. **Chef configuration is executed**, which:
+
+   * Installs Docker
+   * Installs and configures ECS agent
+   * Applies security hardening
+   * Configures logging and monitoring
+3. **ECS agent registers the instance with the ECS Cluster**
+
+Once complete:
+
+* The EC2 instance becomes an **available worker node**
+* It remains idle until an ECS Task is scheduled
+
+---
+
+## 5. State Machine (Execution Orchestration)
+
+### 5.1 Triggering an Execution
+
+A dbt execution is triggered by:
+
+* Manual request
+* API call
+* Upstream system or event
+
+The trigger invokes the **State Machine**, passing runtime parameters such as:
+
+```json
+{
+  "command": "dbt run",
+  "models": "stg_*",
+  "target": "prod"
+}
+```
+
+---
+
+### 5.2 Responsibilities of the State Machine
+
+The State Machine:
+
+1. Validates execution parameters
+2. Determines execution flow
+3. Calls ECS `RunTask`
+4. Waits for task completion
+5. Captures success or failure
+6. Logs execution metadata
+
+The State Machine acts as the **orchestrator** for dbt runs.
+
+---
+
+## 6. ECS Task – Actual dbt Execution (Runtime Phase)
+
+### 6.1 What an ECS Task Is
+
+An ECS Task represents a **single execution of a container** using:
+
+* The Docker image built by Jenkins
+* CPU and memory constraints
+* IAM Task Role
+* Runtime parameters from the State Machine
+
+---
+
+### 6.2 Execution Flow Inside the Task
+
+1. ECS scheduler selects an EC2 instance in the cluster
+2. Docker container starts on that instance
+3. Container entrypoint invokes the **Python wrapper**
+4. Wrapper:
+
+   * Reads parameters passed by the State Machine
+   * Executes dbt commands (`dbt run`, `dbt test`, etc.)
+   * Interacts with Athena and Glue Catalog
+   * Extracts lineage metadata
+   * Pushes lineage information to Alation
+5. dbt execution completes
+6. Container exits
+7. ECS reports task status
+8. State Machine records final outcome
+
+> **This is the only point where dbt actually runs.**
+
+---
+
+## 7. Why This Architecture Exists
+
+This setup was designed to:
+
+* Provide **self-service dbt execution**
+* Ensure **environment consistency** via Docker
+* Enable **secure, role-based AWS access**
+* Support **scalability and isolation**
+* Integrate **custom lineage reporting**
+* Avoid long-running processes
+
+---
+
+## 8. Component Responsibility Summary
+
+| Component       | Responsibility                     |
+| --------------- | ---------------------------------- |
+| Jenkins         | Build and package dbt runtime      |
+| Docker Image    | Reproducible execution environment |
+| Service Catalog | Provision execution infrastructure |
+| EC2             | Compute capacity                   |
+| ECS Cluster     | Container scheduling               |
+| Chef            | Instance bootstrap                 |
+| State Machine   | Execution orchestration            |
+| ECS Task        | Actual dbt execution               |
+| IAM Roles       | Secure AWS access                  |
+| KMS             | Encryption                         |
+| CloudWatch      | Logging and observability          |
+
+---
+
+## 9. One-Line Summary
+
+> The current architecture packages dbt into a Docker image, provisions a dedicated container execution platform using Service Catalog, and executes dbt workloads on demand by orchestrating ECS tasks through a State Machine.
+
+---
+
+If you want next, I can:
+
+* Rewrite this as a **short executive summary**
+* Create a **comparison doc vs Astronomer**
+* Turn this into a **diagram description**
+* Help you prepare **Q&A for leadership**
+
+Just tell me 👍
