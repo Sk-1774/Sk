@@ -1,0 +1,675 @@
+Here’s how I’d structure this as a Confluence space, designed for both technical and non-technical readers:
+
+Confluence Space Structure
+
+DBT on ECS Fargate (Space Home)
+│
+├── 📄 Home Page — DBT Fargate Migration Hub
+│
+├── 📁 1. Overview & Business Case
+│   ├── 📄 Executive Summary
+│   ├── 📄 Problem Statement — Why We're Moving Away from EC2
+│   └── 📄 What Is AWS Fargate?
+│
+├── 📁 2. Architecture
+│   ├── 📄 Architecture Overview (with diagram)
+│   ├── 📄 Resources Created (Per-Tenant)
+│   └── 📄 Runtime Flow — Step by Step
+│
+├── 📁 3. Technical Deep Dive
+│   ├── 📄 ECS on EC2 vs ECS on Fargate
+│   ├── 📄 Technical Changes Made
+│   └── 📄 IAM Role Structure
+│
+├── 📁 4. Multi-Tenancy
+│   ├── 📄 Multi-Tenancy Model
+│   └── 📄 Per-Tenant Resource Isolation
+│
+├── 📁 5. Cost & Business Value
+│   ├── 📄 Cost Analysis
+│   └── 📄 Fargate Pros & Cons
+│
+├── 📁 6. PoC Results
+│   ├── 📄 Testing & Validation Results
+│   └── 📄 Risks & Mitigations
+│
+├── 📁 7. Migration & Rollout
+│   ├── 📄 Migration Plan (Phased)
+│   └── 📄 Runbook — Deploying a New Tenant on Fargate
+│
+└── 📁 8. Reference
+    ├── 📄 Glossary
+    └── 📄 Decision Log
+
+
+Page-by-Page Content
+
+🏠 HOME PAGE — DBT Fargate Migration Hub
+Labels: dbt fargate ecs platform poc
+
+Status: 🟡 Pending Approval
+PoC completed. This space documents the end-to-end migration of DBT execution from ECS on EC2 to ECS on Fargate. Use the links below to navigate to the section most relevant to you.
+
+
+
+|I am…                   |Start here                                             |
+|------------------------|-------------------------------------------------------|
+|Director / Product Owner|Executive Summary → Cost Analysis → Migration Plan     |
+|Platform Engineer       |Technical Changes → IAM Role Structure → Runbook       |
+|New to this project     |What Is Fargate? → Architecture Overview → Runtime Flow|
+
+Quick Status
+
+
+
+|Item              |Status       |
+|------------------|-------------|
+|PoC Execution     |✅ Complete   |
+|Validation Testing|✅ All Passed |
+|Director Approval |🟡 Pending    |
+|Production Rollout|⏳ Not Started|
+
+Key Contacts
+
+
+
+|Role          |Owner          |
+|--------------|---------------|
+|Technical Lead|[Your Name]    |
+|Product Owner |[PO Name]      |
+|Director      |[Director Name]|
+
+📄 1.1 — Executive Summary
+Labels: overview business-case
+Parent: Overview & Business Case
+
+One Line: We are replacing EC2-backed ECS compute for DBT with AWS Fargate — eliminating infrastructure management, improving tenant isolation, and aligning cost to actual usage.
+
+Why This Change
+The current DBT platform runs ECS tasks on EC2 instances managed within an Auto Scaling Group. This works, but it forces the platform team to operate a layer of infrastructure — EC2 instances, AMIs, Auto Scaling Groups — that provides no value for a short-lived batch workload like DBT. Every DBT run is a container that starts, executes, and stops. The EC2 layer underneath it just needs to disappear.
+What We’re Doing
+We are migrating DBT execution to AWS Fargate. Fargate is a serverless compute engine for containers. We define CPU, memory, networking, and IAM requirements — AWS manages everything underneath. No instances. No patching. No capacity planning.
+Each tenant gets a completely isolated execution environment: their own IAM roles, their own Step Functions state machine, their own Service Catalog product, and their own Fargate task at runtime. Nothing is shared.
+PoC Results
+The PoC was completed successfully. All validation tests passed. DBT ran correctly on Fargate, logs streamed to CloudWatch, outputs landed in S3, and IAM boundaries held across tenants.
+What We’re Asking For
+	1.	Approval to begin Phase 1 (Foundation work)
+	2.	Approval for parallel running with two pilot tenants
+	3.	Approval to decommission the EC2 cluster post-validation
+	4.	Engineering capacity allocation for a 6-week rollout
+
+📄 1.2 — Problem Statement — Why We’re Moving Away from EC2
+Labels: problem-statement ec2 context
+Parent: Overview & Business Case
+
+Background
+DBT runs are short-lived batch jobs. A tenant triggers a run, a container spins up, models are executed against the data warehouse, and the container exits. The entire lifecycle is typically minutes long.
+Despite this simplicity, the current platform requires the platform team to maintain a full EC2-based ECS cluster underneath it. That cluster has operational demands entirely disproportionate to the workload it’s serving.
+
+Problems with the Current EC2 Setup
+AMI Lifecycle
+Every EC2 instance in the cluster runs an AMI that must be regularly refreshed — OS patches, security updates, dependency changes. Each refresh requires building a new AMI, testing it, rolling it out through the ASG, draining old instances, and verifying the cluster recovers cleanly. This is engineering time spent on infrastructure, not product.
+Auto Scaling Group Complexity
+The ASG requires ongoing configuration: scale-in/scale-out policies, warm pools, launch templates, instance refresh strategies, and cooldown tuning. Any misconfiguration can leave the cluster under-provisioned during peak runs or over-provisioned (and overspending) during quiet periods.
+Capacity Planning
+The cluster must be sized for worst-case concurrent load across all tenants. In practice, this means the cluster is over-provisioned most of the time. Idle EC2 instances continue billing whether or not any DBT tasks are running.
+Multi-Tenant Contention
+All tenants share the same EC2 instance pool. A large DBT run from one tenant competes for resources with every other tenant scheduled at the same time. There is no hard isolation boundary — only ECS scheduling.
+Instance Failure Risk
+EC2 instances fail. When they do, the cluster must drain the instance, replace it, re-register it, and restore capacity. This process is operational overhead that has nothing to do with the DBT product.
+Security Surface
+Shared EC2 instances mean a shared host. If a container were to escape its sandbox, the shared host is the next layer of exposure — and all other tenants’ workloads run on the same host.
+
+The Core Conclusion
+The EC2 layer is infrastructure overhead with no unique architectural value for this workload. DBT runs are stateless, short-lived, and containerised. The compute substrate can and should be invisible — which is exactly what Fargate provides.
+
+📄 1.3 — What Is AWS Fargate?
+Labels: fargate explainer serverless
+Parent: Overview & Business Case
+
+Summary
+AWS Fargate is a serverless compute engine for containers. You define what your container needs — CPU, memory, networking, IAM role. AWS provisions the compute, runs the container, and cleans up when the task completes. You never see an EC2 instance.
+
+How It Works
+When a Fargate task is launched:
+	1.	AWS provisions isolated compute infrastructure for that task
+	2.	The container image is pulled from ECR
+	3.	The task runs with a dedicated ENI (its own network interface), its own CPU and memory allocation, and an AWS-managed runtime environment
+	4.	When the task exits, the compute is immediately released
+	5.	Billing stops at that moment
+There is no host to SSH into, no AMI to maintain, no instance to drain. The compute exists only for the duration of the task.
+
+Key Fargate Properties
+
+
+
+|Property     |Detail                                                    |
+|-------------|----------------------------------------------------------|
+|Compute model|Serverless — AWS manages all underlying infrastructure    |
+|Network mode |awsvpc mandatory — dedicated ENI per task                 |
+|Billing      |Per-second vCPU and memory, from task start to task stop  |
+|Isolation    |Full task-level isolation — no shared host                |
+|Scaling      |Per-task — no cluster scaling required                    |
+|Max task size|16 vCPU, 120GB memory                                     |
+|Integration  |Native with ECS, Step Functions, IAM, CloudWatch, ECR, VPC|
+
+Why It’s the Right Fit for DBT
+DBT runs are batch jobs — they start, execute SQL transformations, and stop. They are not latency-sensitive. They don’t need persistent state on the compute layer. They don’t require host-level capabilities. They run in containers.
+Fargate was designed for exactly this pattern: short-lived, containerised, on-demand workloads where infrastructure management would be pure overhead.
+
+📄 2.1 — Architecture Overview
+Labels: architecture diagram fargate ecs
+Parent: Architecture
+
+Diagram
+(Insert your draw.io diagram here — embed the image or attach the file)
+
+Three-Part Architecture
+The architecture has three logical sections:
+Section 1 — Resources Created (Per Tenant)
+The complete set of AWS resources provisioned when a new tenant is onboarded to the platform. Each tenant gets a fully independent resource stack.
+Section 2 — ECS-TASK Service Catalog Product
+The mechanism through which a Nexus container image is synced to the tenant’s local ECR repository and made available for execution via the task definition.
+Section 3 — Runtime Flow
+The end-to-end execution path from a tenant triggering a DBT run through Service Catalog, to Step Functions orchestration, to Fargate task execution, through to CloudWatch logging and S3 output.
+
+Design Principles
+	∙	Isolation by default — no cross-tenant resource sharing at any layer
+	∙	Serverless compute — no EC2 instances, no cluster capacity management
+	∙	Least-privilege IAM — every role scoped to minimum required permissions
+	∙	Native AWS integration — Step Functions, ECR, CloudWatch, S3, SSM, VPC
+
+📄 2.2 — Resources Created (Per Tenant)
+Labels: resources iam ecs per-tenant
+Parent: Architecture
+
+Overview
+Every tenant onboarded to the platform receives its own independent set of AWS resources. This table describes each resource, its type, and its purpose.
+
+
+
+|Resource                        |AWS Service        |Purpose                                                                                      |
+|--------------------------------|-------------------|---------------------------------------------------------------------------------------------|
+|SM IAM Role                     |IAM                |Step Functions execution role — grants `ecs:RunTask` and `iam:PassRole` scoped to this tenant|
+|ECS Task IAM Role               |IAM                |Runtime role assumed by the Fargate container — access to tenant S3 buckets, CloudWatch, SSM |
+|ECS Execution Role              |IAM                |Allows Fargate to pull the container image from ECR and stream logs to CloudWatch            |
+|ECS Log Group                   |CloudWatch         |Captures all DBT execution output for this tenant — isolated from other tenants              |
+|ECS Cluster                     |ECS                |Logical cluster used for task scheduling — no EC2 instances attached                         |
+|Task Definition                 |ECS                |Specifies container image, CPU, memory, network mode, IAM roles, and environment variables   |
+|Task Definition SSM Parameter   |SSM Parameter Store|Stores the task definition ARN — consumed by the Service Catalog product at launch time      |
+|ECS-TASK Service Catalog Product|Service Catalog    |Tenant-facing entry point — accepts input parameters and triggers the DBT execution flow     |
+|Step Functions State Machine    |Step Functions     |Orchestrates the DBT execution — calls ECS RunTask and manages state transitions             |
+|ECR Repository                  |ECR                |Tenant-specific container registry — stores the synced DBT image for this tenant             |
+
+Why Per-Tenant Resources Matter
+Sharing any of these resources across tenants would introduce coupling — a change in one tenant’s configuration could affect another’s execution. Dedicated resources per tenant ensure:
+	∙	Configuration changes are tenant-scoped and safe to make independently
+	∙	IAM permissions are bounded to the tenant’s own resources
+	∙	A failure in one tenant’s state machine or task definition has no effect on others
+	∙	Audit logs (CloudWatch, CloudTrail) are naturally separated per tenant
+
+📄 2.3 — Runtime Flow — Step by Step
+Labels: runtime step-functions fargate flow
+Parent: Architecture
+
+Trigger
+A tenant (or an automated scheduler) invokes the ECS-TASK Service Catalog product with two parameters:
+	∙	TaskDefinitionSSM — the SSM parameter path pointing to this tenant’s task definition ARN
+	∙	SynchNexusImage — flag indicating whether to sync the Nexus image to ECR before execution
+
+Execution Steps
+
+
+
+|Step|Actor               |Action                                                                                                          |
+|----|--------------------|----------------------------------------------------------------------------------------------------------------|
+|1   |Service Catalog     |Product is launched with tenant parameters                                                                      |
+|2   |Step Functions      |State Machine is triggered using the SM IAM Role                                                                |
+|3   |Step Functions → ECS|State Machine calls `ecs:RunTask`, passing the task definition ARN and network config (subnets, security groups)|
+|4   |ECS Control Plane   |Validates the Task Definition; selects Fargate as the launch type                                               |
+|5   |Fargate             |AWS provisions an isolated task: dedicated ENI, isolated CPU/memory, AWS-managed runtime                        |
+|6   |Execution Role      |Fargate assumes the Execution Role and pulls the DBT image from the tenant ECR repository                       |
+|7   |DBT Container       |Container starts; DBT models execute against the target data warehouse                                          |
+|8   |CloudWatch          |Fargate streams container stdout/stderr to the tenant CloudWatch Log Group in real time                         |
+|9   |S3                  |DBT outputs (run results, artifacts) are written to tenant S3 as configured                                     |
+|10  |Task Completion     |Task transitions to STOPPED; compute is released; billing ceases                                                |
+
+State Machine Flow (Simplified)
+
+[START]
+   ↓
+[Resolve Task Definition from SSM]
+   ↓
+[ecs:RunTask → Fargate]
+   ↓
+[Wait for Task Completion]
+   ↓
+[Check Exit Code]
+   ↓                    ↓
+[SUCCESS → END]    [FAILURE → Retry / Alert]
+
+
+📄 3.1 — ECS on EC2 vs ECS on Fargate
+Labels: comparison ec2 fargate decision
+Parent: Technical Deep Dive
+
+
+
+|Dimension                |ECS on EC2                                                 |ECS on Fargate                                       |
+|-------------------------|-----------------------------------------------------------|-----------------------------------------------------|
+|Infrastructure Management|EC2 instances, AMIs, ASGs, and instance lifecycle to manage|Fully managed by AWS — zero EC2 infrastructure       |
+|Capacity Planning        |Must pre-provision cluster capacity for peak load          |No capacity planning — provisioned on demand per task|
+|Compute Isolation        |Containers share underlying EC2 instances                  |Each task: dedicated ENI, CPU, memory, runtime       |
+|Scaling                  |EC2 scale-out/scale-in required                            |Scales per task — no cluster changes                 |
+|Billing                  |Per-hour EC2 regardless of task activity                   |Per-second vCPU + memory per task                    |
+|Security                 |Shared host between tenant workloads                       |No shared host — full task-level isolation           |
+|Operational Overhead     |High — patching, AMI builds, ASG tuning                    |Low — container and task definition only             |
+|Multi-Tenancy            |Noisy neighbour risk; resource contention                  |Full per-task isolation by design                    |
+|Cold Start               |Fast (warm EC2 already in cluster)                         |~10–30s (acceptable for batch workloads)             |
+|DBT Fit                  |Workable but operationally heavy                           |Ideal — serverless, isolated, right-sized            |
+
+Verdict
+For a short-lived batch workload like DBT, the EC2 layer adds operational cost with no architectural benefit. Fargate eliminates that entire layer and replaces it with compute that is invisible, isolated, and billed to the second.
+
+📄 3.2 — Technical Changes Made
+Labels: technical task-definition networking launch-type
+Parent: Technical Deep Dive
+
+ECS Task Definition Changes
+
+
+
+|Field                    |Before                    |After                                      |
+|-------------------------|--------------------------|-------------------------------------------|
+|`requiresCompatibilities`|`['EC2']`                 |`['FARGATE']`                              |
+|`networkMode`            |`bridge` or `awsvpc`      |`awsvpc` (mandatory)                       |
+|`taskRoleArn`            |Instance profile inherited|Explicit tenant-scoped IAM role            |
+|`executionRoleArn`       |Not always set            |Required — set explicitly                  |
+|CPU/Memory               |Defined at container level|Defined at task level (Fargate requirement)|
+|Host port mapping        |Required (bridge mode)    |Not required (awsvpc)                      |
+|Placement constraints    |EC2 instance targeting    |Not applicable                             |
+
+Cluster / Launch Type Changes
+
+
+
+|Config                  |Before                |After                     |
+|------------------------|----------------------|--------------------------|
+|Launch Type             |`EC2`                 |`FARGATE`                 |
+|Capacity Provider       |EC2 Auto Scaling Group|`FARGATE` / `FARGATE_SPOT`|
+|EC2 Instances in Cluster|Yes — maintained fleet|None                      |
+|AMI Management          |Required              |Eliminated                |
+
+Networking Changes
+	∙	Tasks now run in private subnets with a dedicated ENI per task
+	∙	Security groups applied at the task level (not instance level)
+	∙	No host-based port mapping required
+	∙	VPC routing and NAT Gateway configuration unchanged
+	∙	Recommendation: Add VPC endpoints for ECR and S3 to eliminate NAT Gateway data transfer costs
+
+Logging
+No changes to CloudWatch log group configuration, retention policies, metric filters, or alerting. Fargate’s runtime handles log streaming transparently. Log groups remain tenant-scoped.
+
+📄 3.3 — IAM Role Structure
+Labels: iam security roles least-privilege
+Parent: Technical Deep Dive
+
+Three Roles Per Tenant
+Each tenant’s execution path involves three distinct IAM roles, each scoped to a specific function:
+
+Role 1 — SM IAM Role (Step Functions)
+Purpose: Allows the Step Functions State Machine to trigger the ECS Fargate task.
+Key Permissions:
+	∙	ecs:RunTask — scoped to this tenant’s task definition ARN
+	∙	iam:PassRole — scoped to this tenant’s ECS Task IAM Role ARN only
+Why scoped tightly: The State Machine should only be able to run this tenant’s task, and only pass this tenant’s IAM role. Cross-tenant invocation is denied by default.
+
+Role 2 — ECS Task IAM Role (Runtime)
+Purpose: Runtime permissions assumed by the DBT container during execution.
+Key Permissions:
+	∙	s3:GetObject, s3:PutObject — scoped to tenant S3 buckets only
+	∙	logs:CreateLogStream, logs:PutLogEvents — scoped to tenant log group
+	∙	ssm:GetParameter — scoped to tenant SSM parameter paths
+	∙	Secrets Manager access for DBT profile credentials (if applicable)
+Why this matters: This role defines what the DBT code can do at runtime. It should have no access to other tenants’ buckets, log groups, or secrets.
+
+Role 3 — ECS Execution Role (Fargate Infrastructure)
+Purpose: Used by Fargate itself (not the container) to pull the image and stream logs.
+Key Permissions:
+	∙	ecr:GetAuthorizationToken
+	∙	ecr:BatchGetImage, ecr:GetDownloadUrlForLayer — scoped to tenant ECR repository
+	∙	logs:CreateLogStream, logs:PutLogEvents
+Why separate from Task Role: The Execution Role is an infrastructure concern — pulling images and writing logs. It should never have access to tenant data resources (S3, SSM, databases).
+
+Permission Boundary Diagram
+
+Step Functions (SM IAM Role)
+    └── ecs:RunTask → [Tenant Task Definition]
+    └── iam:PassRole → [ECS Task IAM Role] only
+
+Fargate Runtime (Execution Role)
+    └── ECR pull → [Tenant ECR Repo] only
+    └── CloudWatch log stream → [Tenant Log Group] only
+
+DBT Container (ECS Task IAM Role)
+    └── S3 → [Tenant Buckets] only
+    └── SSM → [Tenant Parameters] only
+    └── CloudWatch → [Tenant Log Group] only
+
+
+📄 4.1 — Multi-Tenancy Model
+Labels: multi-tenancy isolation architecture
+Parent: Multi-Tenancy
+
+The Model
+Each tenant on the platform is an isolated unit. From the moment a tenant is onboarded, every resource in their stack is dedicated to them. No resource is shared with another tenant at the control plane or data plane level.
+This is not enforced by tagging or policy alone — it is structural. A tenant’s State Machine can only invoke their task definition. Their task definition uses their IAM role. Their IAM role can only access their S3 buckets and their log group.
+
+Tenant Onboarding Stack
+When a new tenant is onboarded, the following is deployed (all dedicated to that tenant):
+
+Tenant A
+├── Service Catalog Product (Tenant A)
+├── Step Functions State Machine (Tenant A)
+├── SM IAM Role (Tenant A)
+├── ECS Task Definition (Tenant A)
+│   ├── Container Image: Tenant A ECR
+│   ├── CPU / Memory: right-sized for Tenant A
+│   └── Task Role: Tenant A Task IAM Role
+├── ECS Task IAM Role (Tenant A)
+├── ECS Execution Role (Tenant A)
+├── CloudWatch Log Group (Tenant A)
+└── ECR Repository (Tenant A)
+
+
+Tenant B has an identical structure — completely separate, with no links between the two stacks.
+
+Runtime Isolation
+At execution time, Fargate provides the final layer of isolation: each task runs with its own ENI, its own CPU and memory allocation, and an AWS-managed runtime. There is no shared host, no shared network interface, and no shared process space.
+
+What This Means Operationally
+	∙	A broken task definition for Tenant A does not affect Tenant B’s runs
+	∙	A permission error for Tenant A does not cause Tenant B to fail
+	∙	Scaling one tenant’s workload has zero effect on another tenant’s performance
+	∙	Each tenant’s logs, metrics, and audit trail are independently queryable
+
+📄 4.2 — Per-Tenant Resource Isolation
+Labels: isolation resources per-tenant
+Parent: Multi-Tenancy
+
+
+
+|Component                          |Per-Tenant?|Isolation Benefit                               |
+|-----------------------------------|-----------|------------------------------------------------|
+|Service Catalog Product            |✅ Yes      |Tenant-specific config; no shared state         |
+|SM IAM Role                        |✅ Yes      |Cross-tenant state machine execution prevented  |
+|ECS Task IAM Role                  |✅ Yes      |Runtime permissions bounded to tenant resources |
+|ECS Execution Role                 |✅ Yes      |ECR and log access scoped to tenant             |
+|Step Functions State Machine       |✅ Yes      |Independent orchestration per tenant            |
+|ECS Task Definition                |✅ Yes      |Right-sized compute; isolated container config  |
+|Fargate Task (at runtime)          |✅ Yes      |Dedicated ENI, CPU, memory — no shared host     |
+|CloudWatch Log Group               |✅ Yes      |Logs fully separated; no cross-tenant log access|
+|ECR Repository                     |✅ Yes      |Image supply chain isolated per tenant          |
+|SSM Parameter (Task Definition ARN)|✅ Yes      |Parameter path scoped to tenant                 |
+
+Elimination of EC2 Idle Waste
+In the previous EC2 model, the cluster maintained running instances whether or not any tenant had an active DBT run. A cluster with 3 tenants and 3 EC2 instances was billing for all 3 instances at 3am even if the last DBT run completed at 11pm.
+With Fargate: when there are no running tasks, there is no compute cost. Each tenant’s task provisions compute on demand, uses it, and releases it. The platform has zero idle compute spend.
+
+📄 5.1 — Cost Analysis
+Labels: cost fargate ec2 billing
+Parent: Cost & Business Value
+
+Cost Model Comparison
+
+
+
+|Cost Factor            |ECS on EC2                                      |ECS on Fargate                     |
+|-----------------------|------------------------------------------------|-----------------------------------|
+|Idle Compute           |EC2 billed 24/7 regardless of run activity      |Zero cost when no tasks are running|
+|Capacity Buffer        |Over-provisioning required                      |No buffer needed                   |
+|AMI & Patching         |Engineering time on AMI builds and rollouts     |Eliminated                         |
+|ASG Management         |Ongoing config and warm pool costs              |Eliminated                         |
+|Multi-Tenant Idle Waste|Shared capacity partially wasted on idle tenants|Each tenant billed independently   |
+|Right-Sizing           |Cluster-level, sized for worst-case tenant      |Per-task, per-tenant               |
+|Billing Granularity    |Per-hour EC2 instance                           |Per-second vCPU + memory per task  |
+
+Fargate Pricing Reference
+Fargate charges for vCPU-hours and GB-hours from task start to task stop.
+
+
+
+|Task Config   |Duration  |Approx. Cost (USD)|
+|--------------|----------|------------------|
+|0.5 vCPU / 1GB|5 minutes |~$0.01            |
+|1 vCPU / 2GB  |10 minutes|~$0.02–$0.04      |
+|2 vCPU / 4GB  |20 minutes|~$0.08–$0.12      |
+|4 vCPU / 8GB  |30 minutes|~$0.25–$0.35      |
+
+💡 Add your actual figures here: Pull current EC2 monthly spend from AWS Cost Explorer. Estimate Fargate cost using actual DBT run durations and frequencies per tenant. The delta will be your concrete cost saving.
+
+Cost Optimisation Levers
+	∙	Fargate Spot — use for non-critical or dev/test runs; up to 70% cost reduction
+	∙	VPC Endpoints — eliminate NAT Gateway data transfer charges for ECR and S3 traffic
+	∙	Per-tenant cost tagging — tag all Fargate tasks with tenant ID for accurate chargeback reporting
+	∙	Right-size per tenant — each tenant’s task definition can be tuned independently; no need to size for the largest tenant across the fleet
+	∙	Run scheduling — schedule non-urgent DBT runs during off-peak hours to maximise Fargate Spot availability
+
+📄 5.2 — Fargate Pros & Cons
+Labels: fargate trade-offs decision
+Parent: Cost & Business Value
+
+Advantages
+
+
+
+|Advantage             |Detail                                                                   |
+|----------------------|-------------------------------------------------------------------------|
+|Zero EC2 management   |No AMIs, no ASGs, no patching, no instance lifecycle                     |
+|True pay-per-use      |Billing stops the moment the task stops — no idle cost                   |
+|Per-task isolation    |Dedicated ENI, CPU, memory — no shared host                              |
+|On-demand scaling     |No pre-warming, no capacity reservation — Fargate provisions per task    |
+|Batch workload fit    |Designed for short-lived, containerised, on-demand workloads             |
+|Security posture      |No shared host; per-task IAM; immutable runtime                          |
+|Operational simplicity|Teams manage container definitions, not servers                          |
+|Runtime consistency   |No host-level drift; every task runs in identical AWS-managed environment|
+|Native AWS integration|Step Functions, ECR, CloudWatch, S3, IAM — all work out of the box       |
+
+Limitations / Trade-offs
+
+
+
+|Limitation                                            |Impact                                  |Mitigation                                            |
+|------------------------------------------------------|----------------------------------------|------------------------------------------------------|
+|Cold start ~10–30s per task                           |Low — DBT runs are not latency-sensitive|Accept; immaterial for batch pattern                  |
+|No EC2 host-level access                              |Low — not required for DBT              |Not applicable to this workload                       |
+|awsvpc only (no bridge/host mode)                     |Low — awsvpc is preferred anyway        |Design around awsvpc from the start                   |
+|Task size bounded by Fargate tiers                    |Medium — max 16 vCPU / 120GB            |Sufficient for all current and projected DBT workloads|
+|Fargate Spot can be interrupted                       |Medium if Spot is used                  |Use Spot for non-critical runs only; add retry logic  |
+|Per-task cost > reserved EC2 at extreme sustained load|Low — not applicable to batch pattern   |Monitor; reassess only if sustained 24/7 load emerges |
+
+Bottom Line
+All identified trade-offs are either not applicable to the DBT batch execution pattern or are easily mitigated. The advantages are structurally transformative for a multi-tenant platform team that should not be operating an EC2 fleet.
+
+📄 6.1 — Testing & Validation Results
+Labels: poc testing validation results
+Parent: PoC Results
+
+PoC Scope
+The PoC was designed to validate that DBT can execute correctly on Fargate with full parity to the EC2-based setup, and that all supporting infrastructure (IAM, networking, logging, storage) functions correctly in the Fargate model.
+
+Test Results
+
+
+
+|Test                                       |Result  |Notes                                                   |
+|-------------------------------------------|--------|--------------------------------------------------------|
+|DBT execution end-to-end on Fargate        |✅ PASSED|All DBT models ran successfully                         |
+|Task lifecycle: START → RUNNING → STOPPED  |✅ PASSED|Clean transitions; no stuck tasks                       |
+|CloudWatch log streaming                   |✅ PASSED|Logs captured in real time during execution             |
+|S3 output generation                       |✅ PASSED|DBT artifacts and run results written correctly         |
+|IAM role permissions (Task + Execution)    |✅ PASSED|Least-privilege policies validated; no permission errors|
+|Network connectivity (private subnet + ENI)|✅ PASSED|Task reached all required endpoints successfully        |
+|ECR image pull via Execution Role          |✅ PASSED|Image pulled from tenant ECR without issue              |
+|No EC2 capacity or instance errors         |✅ PASSED|Zero infrastructure-related failures observed           |
+|Multi-tenant IAM boundary                  |✅ PASSED|Cross-tenant access denied as expected                  |
+
+Overall PoC Result: ✅ All Tests Passed
+
+Observations
+	∙	Fargate task cold start was approximately 15–20 seconds in the PoC environment — within the acceptable range for a batch workload
+	∙	No issues were observed with DBT connectivity to the target data warehouse from within the Fargate task
+	∙	CloudWatch log streaming was seamless — no configuration changes were needed compared to the EC2 setup
+	∙	The per-tenant IAM boundary test confirmed that scoped iam:PassRole policies correctly prevent cross-tenant role assumption
+
+📄 6.2 — Risks & Mitigations
+Labels: risks mitigations fargate
+Parent: PoC Results
+
+
+
+|Risk                                                         |Severity|Likelihood         |Mitigation                                                                                                         |
+|-------------------------------------------------------------|--------|-------------------|-------------------------------------------------------------------------------------------------------------------|
+|Fargate cold start adds latency to run initiation            |🟢 Low   |Certain (by design)|DBT runs are not latency-sensitive. 10–30s startup is immaterial vs typical execution of minutes. Accept.          |
+|Task size limits insufficient for very large DBT models      |🟡 Medium|Low                |Fargate max is 16 vCPU / 120GB — sufficient for current and projected workloads. Monitor and right-size per tenant.|
+|Fargate Spot interruptions (if Spot is adopted)              |🟡 Medium|Low-Medium         |Use Spot for non-critical runs only. Add retry logic in Step Functions state machine.                              |
+|Per-task cost exceeds reserved EC2 at extreme sustained load |🟢 Low   |Very Low           |Not applicable to DBT batch pattern. Reassess only if continuous 24/7 load emerges.                                |
+|ECR image pull failure due to Execution Role misconfiguration|🟢 Low   |Low                |Validated in PoC. Policies are templated. Add ECR pull validation to CI pipeline for task definition changes.      |
+|VPC/NAT connectivity issues                                  |🟢 Low   |Low                |Validated in PoC. Recommend VPC endpoints for ECR and S3 to eliminate NAT Gateway dependency entirely.             |
+|Step Functions does not handle task failure gracefully       |🟡 Medium|Low                |Implement explicit error/retry states in the state machine. Define alerting on task failure exit codes.            |
+
+📄 7.1 — Migration Plan (Phased)
+Labels: migration plan rollout phases
+Parent: Migration & Rollout
+
+Overview
+The migration is structured into four phases over six weeks, with a parallel-running phase to validate correctness before full cutover.
+
+Phase 1 — Foundation (Week 1–2)
+Goal: Make all tenants Fargate-ready without touching production execution.
+	∙	Finalise Fargate task definition template for all active tenants
+	∙	Update Service Catalog product to deploy Fargate-compatible task definitions
+	∙	Validate VPC endpoints for ECR and S3
+	∙	Update IAM role templates (SM IAM Role, ECS Task IAM Role, Execution Role) across all tenants
+	∙	Update SSM parameter paths if required
+
+Phase 2 — Parallel Running (Week 3–4)
+Goal: Validate Fargate output parity against EC2 with zero production risk.
+	∙	Select two pilot tenants for parallel running
+	∙	Run DBT jobs on both EC2 and Fargate paths simultaneously for pilot tenants
+	∙	Compare output correctness, execution time, and log completeness
+	∙	Monitor CloudWatch metrics: task launch time, execution duration, failure rate
+	∙	Sign off from pilot tenant owners
+
+Phase 3 — Full Cutover (Week 5–6)
+Goal: Migrate all tenants to Fargate; decommission EC2 infrastructure.
+	∙	Migrate all remaining tenants to Fargate launch type
+	∙	Confirm all tenants’ DBT runs executing correctly on Fargate
+	∙	Drain and deregister EC2 instances from the ECS cluster
+	∙	Delete Auto Scaling Group, launch templates, and associated EC2 resources
+	∙	Deregister and deprecate old EC2-based AMIs
+	∙	Update all runbooks and operational documentation
+
+Phase 4 — Optimisation (Post-Migration)
+Goal: Extract maximum value from the Fargate model.
+	∙	Enable Fargate Spot for non-critical / dev tenants
+	∙	Add per-tenant cost tagging to all Fargate task definitions
+	∙	Right-size CPU/memory per tenant based on actual run metrics
+	∙	Implement Step Functions retry and error-handling states
+	∙	Set up cost attribution dashboard in AWS Cost Explorer by tenant tag
+
+📄 7.2 — Runbook: Deploying a New Tenant on Fargate
+Labels: runbook onboarding tenant operations
+Parent: Migration & Rollout
+
+Prerequisites
+	∙	Tenant ID confirmed
+	∙	Nexus image URL provided
+	∙	Target data warehouse credentials available in Secrets Manager or SSM
+	∙	Subnets and security groups identified for the tenant
+
+Steps
+Step 1 — Create IAM Roles
+	∙	Deploy SM IAM Role for Step Functions (use tenant-scoped template)
+	∙	Deploy ECS Task IAM Role (scope S3, SSM, CloudWatch to tenant resources)
+	∙	Deploy ECS Execution Role (scope ECR and CloudWatch only)
+Step 2 — Create ECR Repository
+	∙	Create tenant ECR repository
+	∙	Configure Nexus sync to push the DBT image to tenant ECR
+Step 3 — Create Task Definition
+	∙	Use Fargate task definition template
+	∙	Set requiresCompatibilities: FARGATE
+	∙	Set networkMode: awsvpc
+	∙	Assign Task IAM Role and Execution Role ARNs
+	∙	Configure CPU and memory (baseline: 1 vCPU / 2GB; tune per tenant)
+	∙	Set CloudWatch log group path to tenant log group
+Step 4 — Store Task Definition ARN in SSM
+	∙	Register the task definition
+	∙	Store the ARN at the tenant SSM parameter path
+Step 5 — Create CloudWatch Log Group
+	∙	Create tenant-scoped log group
+	∙	Set retention policy
+Step 6 — Deploy State Machine
+	∙	Deploy Step Functions state machine using the tenant SM IAM Role
+	∙	Configure ECS RunTask action with tenant subnets and security groups
+Step 7 — Deploy Service Catalog Product
+	∙	Create ECS-TASK Service Catalog product for the tenant
+	∙	Wire to the State Machine ARN
+	∙	Set accepted parameters: TaskDefinitionSSM, SynchNexusImage
+Step 8 — Validate
+	∙	Trigger a test DBT run via Service Catalog
+	∙	Verify task reaches RUNNING state
+	∙	Verify CloudWatch logs are streaming
+	∙	Verify S3 outputs are written
+	∙	Verify task reaches STOPPED with exit code 0
+
+📄 8.1 — Glossary
+Labels: reference glossary
+Parent: Reference
+
+
+
+|Term           |Definition                                                                                                   |
+|---------------|-------------------------------------------------------------------------------------------------------------|
+|DBT            |Data Build Tool — open-source framework for running SQL-based data transformations in the warehouse          |
+|ECS            |Amazon Elastic Container Service — AWS managed container orchestration platform                              |
+|Fargate        |AWS serverless compute engine for containers — no EC2 instances to provision or manage                       |
+|ENI            |Elastic Network Interface — a virtual network card; each Fargate task receives a dedicated ENI in awsvpc mode|
+|State Machine  |AWS Step Functions workflow that orchestrates the DBT execution sequence                                     |
+|Service Catalog|AWS service enabling self-service deployment of pre-approved architecture products by tenants                |
+|Task Definition|ECS configuration specifying container image, CPU, memory, network mode, IAM roles, and environment variables|
+|ECR            |Amazon Elastic Container Registry — managed Docker container image registry                                  |
+|SSM            |AWS Systems Manager Parameter Store — key-value store for configuration values like task definition ARNs     |
+|ASG            |Auto Scaling Group — EC2 fleet management mechanism; eliminated in the Fargate model                         |
+|AMI            |Amazon Machine Image — EC2 instance OS snapshot; not required with Fargate                                   |
+|awsvpc         |ECS network mode that assigns a dedicated ENI to each task — mandatory for Fargate                           |
+|SM IAM Role    |The IAM role assumed by Step Functions to invoke ECS RunTask and pass the ECS Task IAM Role                  |
+|Execution Role |The IAM role used by Fargate to pull container images from ECR and stream logs to CloudWatch                 |
+|Task IAM Role  |The IAM role assumed by the running container — defines what the DBT code can access at runtime              |
+|Fargate Spot   |Discounted Fargate capacity that can be interrupted — suitable for non-critical workloads                    |
+|PoC            |Proof of Concept — a working prototype validating the feasibility of the proposed architecture               |
+
+📄 8.2 — Decision Log
+Labels: decisions architecture reference
+Parent: Reference
+
+
+
+|Date  |Decision                                                 |Rationale                                                                                       |Decided By   |
+|------|---------------------------------------------------------|------------------------------------------------------------------------------------------------|-------------|
+|[Date]|Migrate DBT from ECS EC2 to ECS Fargate                  |EC2 layer adds operational overhead with no architectural value for a short-lived batch workload|[Your Name]  |
+|[Date]|Use awsvpc network mode                                  |Mandatory for Fargate; provides per-task ENI and cleaner network isolation                      |Platform Team|
+|[Date]|Dedicated IAM roles per tenant (not shared)              |Shared roles create IAM blast radius risk; per-tenant scoping enforces least-privilege          |Platform Team|
+|[Date]|Use Step Functions for orchestration (retain existing)   |Already in use; no reason to change; native ECS RunTask integration                             |Platform Team|
+|[Date]|Store task definition ARN in SSM                         |Decouples Service Catalog product from task definition version; enables independent updates     |Platform Team|
+|[Date]|Fargate Spot deferred to post-migration                  |Reduce risk during initial cutover; add Spot in optimisation phase once baseline is stable      |[Your Name]  |
+|[Date]|VPC endpoints for ECR and S3 recommended but not blocking|Cost and latency improvement; safe to add post-migration without architectural change           |Platform Team|
+
+That’s the full Confluence structure — 11 pages across 8 sections. A few tips for setting it up:
+Confluence-specific recommendations:
+	∙	Use the Status macro on the home page (In Progress, Complete, Approved) so stakeholders can see state at a glance
+	∙	Embed the draw.io diagram directly on page 2.1 using the draw.io Confluence plugin
+	∙	Add page labels (shown on each page above) so everything is searchable by tag
+	∙	Use the Table of Contents macro on longer pages like 3.3 and 4.1
+	∙	Pin the Home Page and the Executive Summary to your team space
+Before presenting to your director: fill in the actual EC2 monthly cost and projected Fargate cost in page 5.1 — that concrete number will carry more weight than any comparison table.​​​​​​​​​​​​​​​​
