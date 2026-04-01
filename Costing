@@ -1,0 +1,339 @@
+Here’s the full document content in text:
+
+CONFIDENTIAL | DBT Compute Execution: Architecture & Cost Comparison
+For Internal Management Review | Risk Finance & Treasury | April 2026
+═══════════════════════════════════════════════════════════════════════
+
+DBT COMPUTE EXECUTION: ARCHITECTURE & COST COMPARISON
+Fargate | ECS/EC2 Multitenant | ECS/EC2 Single-tenant | Cosmos dbt + Astronomer
+Executive Management Review — April 2026
+Prepared by: Risk Finance & Treasury
+
+═══════════════════════════════════════════════════════════════════════
+1. PURPOSE
+═══════════════════════════════════════════════════════════════════════
+
+This document provides a neutral, quantified comparison of four compute
+execution options for dbt workloads to support architecture and finance
+decision-making by senior management. All numbers are derived from POC
+assumptions and will change if run duration, task size, concurrency, or
+instance sizing changes.
+
+═══════════════════════════════════════════════════════════════════════
+2. BASELINE INPUTS (POC Assumptions Used for All Numbers)
+═══════════════════════════════════════════════════════════════════════
+
+Input                                   Value
+──────────────────────────────────────────────────────────────────────
+Tenants                                 6
+Runs per tenant per day                 2
+Total runs per day                      12
+Avg run duration (baseline)             45 minutes
+Total runs per month (approx)           360
+Fargate task sizing                     2 vCPU, 4 GB RAM
+ECS/EC2 cluster sizing (multi)          2 × m5.large, 24×7
+ECS/EC2 cluster sizing (single)         1 × m5.large per tenant (on-demand)
+Cosmos dbt (Astronomer)                 Managed SaaS — usage-billed per run/DAG
+
+Note: Non-compute costs (logs, storage, data transfer, NAT, ECR pulls)
+are excluded and should be assessed separately.
+
+═══════════════════════════════════════════════════════════════════════
+3. EXECUTIVE SUMMARY (6 Tenants, 360 Runs/Month)
+═══════════════════════════════════════════════════════════════════════
+
+Metric                  Fargate-Only     ECS/EC2 Multi    ECS/EC2 Single   Cosmos+Astronomer
+────────────────────────────────────────────────────────────────────────────────────────────
+Monthly compute cost    $260–$325        $95–$110         $150–$220        $200–$400
+Cost per run            $0.72–$0.90      ~$0.30           ~$0.50           $0.55–$1.10
+Cold start latency      30–90 sec        <10 sec (warm)   <10 sec (warm)   ~15–30 sec
+Idle cost (no runs)     ~$0              EC2 baseline on  ~$0 (on-demand)  ~$0 (usage-billed)
+Cost at 15 tenants      $645–$810        $145–$180        $350–$500        $500–$900+
+Cost growth model       Linear (usage)   Step-wise        Per-tenant       Usage-billed SaaS
+Infra management        Low              High             Medium           Very Low (Managed)
+Tenant isolation        High             Medium           High (dedicated) High (SaaS-managed)
+
+* ECS/EC2 single-tenant: each tenant gets a dedicated cluster/instance,
+  spun up on-demand. Highest isolation; higher per-tenant cost than
+  multitenant but eliminates shared-host risk.
+
+** Cosmos dbt + Astronomer: fully managed SaaS orchestration. Cost
+   depends on DAG runs and Astronomer tier. Significant operational
+   savings but highest per-run cost at low volume.
+
+═══════════════════════════════════════════════════════════════════════
+4. DETAILED SIDE-BY-SIDE COMPARISON
+═══════════════════════════════════════════════════════════════════════
+
+4.1 COST & FINANCIAL METRICS
+────────────────────────────────────────────────────────────────────────────────────────────
+Dimension            Metric           Fargate-Only    ECS/EC2 Multi   ECS/EC2 Single  Cosmos+Astronomer  Notes
+────────────────────────────────────────────────────────────────────────────────────────────
+Baseline monthly     $/month          $260–$325       $95–$110        $150–$220       $200–$400          Fargate usage-billed;
+compute              (360 runs)                                                                          EC2 amortises fixed
+                                                                                                         capacity; Cosmos
+                                                                                                         SaaS tier-dependent.
+
+Per-run compute      $/run            $0.72–$0.90     ~$0.30          ~$0.50          $0.55–$1.10        Derived from baseline
+                                                                                                         assumptions only.
+
+Spend predictability Variance driver  Volume-driven   Capacity-driven Per-tenant       Usage-billed SaaS  Each model varies
+                                                                      capacity                            differently.
+
+Idle cost            $ when no runs   ~$0             EC2 baseline    ~$0 (on-demand) ~$0 (usage)        Fargate & Cosmos
+                                                      on                                                  better for idle periods.
+
+Tenant cost scaling  Cost growth      Linear          Step-wise       Linear           Step-wise          Fargate & single-tenant
+                     model                                            (per tenant)     (SaaS tiers)       grow predictably.
+
+Cost control levers  Levers           Task size &     Instance        Instance count,  Astronomer plan,   Different levers per
+                                      run time        size/count &    on-demand sched  DAG frequency      architecture.
+                                                      utilisation
+
+Cost at scale        $/month          $645–$810       $145–$180       $350–$500        $500–$900+         ECS/EC2 multitenant
+(15 tenants)                                                                                              best economics at scale.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+4.2 WORKLOAD THROUGHPUT & PERFORMANCE METRICS
+────────────────────────────────────────────────────────────────────────────────────────────
+Dimension            Metric           Fargate-Only    ECS/EC2 Multi   ECS/EC2 Single  Cosmos+Astronomer  Notes
+────────────────────────────────────────────────────────────────────────────────────────────
+Startup latency      Provisioning     30–90 sec       <10 sec (warm)  <10 sec (warm)  ~15–30 sec         Fargate pulls image
+                                                                                                          each time; EC2 warm.
+
+Repeat execution     Startup overhead Medium          Low             Low             Low                Warm compute reduces
+                                                                                                          overhead.
+
+Performance          Variability      Medium          High            High            Medium–High        EC2 stable when
+consistency                                                                                               capacity is right.
+
+Peak concurrency     Constraint       Cost-limited    Capacity-limited Capacity-limited Plan-limited     Fargate scales cost;
+                                                                                                          EC2/Cosmos scale
+                                                                                                          within capacity/plan.
+
+Failure retry cost   Observable       Higher          Lower (fixed    Lower (fixed    Lower (within      All incur time impact;
+                     behaviour        (per retry)     capacity)       capacity)       plan)              cost impact differs.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+4.3 SCALABILITY & GROWTH METRICS
+────────────────────────────────────────────────────────────────────────────────────────────
+Dimension            Metric           Fargate-Only    ECS/EC2 Multi   ECS/EC2 Single  Cosmos+Astronomer  Notes
+────────────────────────────────────────────────────────────────────────────────────────────
+Scaling example      Tenants          6 → 15          6 → 15          6 → 15          6 → 15             Same scenario all.
+Runs/month at scale  Approx           ~900            ~900            ~900            ~900               2 runs/day/tenant.
+Est. compute/month   $/month          $645–$810       $145–$180       $350–$500       $500–$900+         Multi best at scale.
+Growth behaviour     Cost curve       Linear          Step-wise       Linear          Step-wise (tiers)  Fargate/single linear;
+                                                                                                          multi/Cosmos jump.
+Time to scale        Typical          Fast (<2 min)   Medium (ASG)    Medium          Fast (SaaS)        Fargate & Cosmos
+                                                                                                          scale fastest operationally.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+4.4 SECURITY, ISOLATION & COMPLIANCE
+────────────────────────────────────────────────────────────────────────────────────────────
+Dimension            Metric           Fargate-Only    ECS/EC2 Multi   ECS/EC2 Single  Cosmos+Astronomer  Notes
+────────────────────────────────────────────────────────────────────────────────────────────
+Cross-tenant         Incidents        0               0               0               0 (vendor)         Under correct
+exposure (POC)       observed                                                                             IAM/KMS enforcement.
+
+Isolation mechanism  Countable items  Task role/      Task role/      Dedicated host  SaaS-level         Single-tenant & Cosmos
+                                      tenant          tenant          per tenant      isolation           strongest isolation.
+
+Encryption           Countable items  KMS per tenant  KMS per tenant  KMS per tenant  Vendor KMS         All enforce per-tenant
+boundaries                            possible        possible        (dedicated)     (configurable)     keys/policies.
+
+Shared host risk     Qualitative      Low             Higher          None            None               Single-tenant EC2
+                                                      (shared EC2)    (dedicated)     (SaaS-managed)     eliminates host risk.
+
+Compliance           Qualitative      High            Medium          High            Depends on         Regulatory needs may
+suitability                           (audit trail)   (shared infra)  (dedicated)     vendor certs        favour single/Cosmos.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+4.5 OPERATIONAL & GOVERNANCE METRICS
+────────────────────────────────────────────────────────────────────────────────────────────
+Dimension            Metric           Fargate-Only    ECS/EC2 Multi   ECS/EC2 Single  Cosmos+Astronomer  Notes
+────────────────────────────────────────────────────────────────────────────────────────────
+Infra management     Components       Low             High            Medium          Very Low           EC2 adds patching/AMI;
+                     managed                                                          (vendor manages)   Cosmos fully managed.
+
+Observability        Debug depth      Medium          High            High            Medium             EC2 richer host-level
+                                                      (host-level)    (dedicated)     (SaaS dashboards)  visibility.
+
+Standardisation      Governance       Medium          Medium          Medium          Low (opinionated   EC2 requires infra
+                     effort                                                           SaaS)              standards.
+
+Change blast         Scope            Low             Medium          Low             Low                Shared clusters raise
+radius                                               (shared cluster) (isolated)      (SaaS rollout)     misconfiguration impact.
+
+Deployment agility   Time             High            Medium          Medium          High (SaaS CI/CD)  Fargate & Cosmos
+                                                                                                          simplify infra deps.
+
+Vendor dependency    Lock-in risk     AWS native      AWS native      AWS native      Astronomer + AWS   Cosmos introduces
+                                                                                                          second vendor dependency.
+
+═══════════════════════════════════════════════════════════════════════
+5. RUNTIME SENSITIVITY — Cost Impact (USD/month, 6 tenants)
+═══════════════════════════════════════════════════════════════════════
+
+Avg Runtime      Fargate Monthly    ECS/EC2 Multi    ECS/EC2 Single   Cosmos+Astronomer
+────────────────────────────────────────────────────────────────────────────────────────
+30 min           ~$175–$215         ~$110            ~$100–$150       ~$150–$250
+45 min (base)    ~$260–$325         ~$110            ~$150–$220       ~$200–$400
+60 min           ~$350–$430         ~$110            ~$180–$270       ~$250–$500+
+
+- Fargate cost scales linearly with runtime — longer runs = higher cost.
+- ECS/EC2 Multitenant cost is stable within capacity regardless of runtime.
+- ECS/EC2 Single-tenant scales with runtime but is bounded per tenant.
+- Cosmos dbt + Astronomer pricing depends on DAG execution time and plan tier.
+
+═══════════════════════════════════════════════════════════════════════
+6. COST CALCULATION APPENDIX
+═══════════════════════════════════════════════════════════════════════
+
+6.1 FARGATE-ONLY
+~60 runs × $0.72–$0.90 = ~$43–$54 per tenant per month
+
+  Tenants    Monthly Cost
+  ─────────────────────
+  6          $260–$325
+  10         $430–$540
+  15         $645–$810
+
+- Marginal cost per tenant is constant — linear scaling.
+
+──────────────────────────────────────────────────────────────────────
+6.2 MULTITENANT ECS/EC2
+
+  Tenants    EC2 Capacity    Monthly Cost
+  ───────────────────────────────────────
+  1–6        2 EC2s          ~$110
+  7–12       2 EC2s          ~$110
+  13–18      3 EC2s          ~$155
+
+  Effective cost per tenant:
+  - 6 tenants  → ~$18/tenant/month
+  - 12 tenants → ~$9/tenant/month
+  - Cost per tenant decreases as tenants grow (economy of scale).
+
+──────────────────────────────────────────────────────────────────────
+6.3 SINGLE-TENANT ECS/EC2 (Non-Multitenant)
+Each tenant receives a dedicated EC2 instance (m5.large or equivalent),
+provisioned on-demand or reserved.
+
+  Tenants    EC2 Instances    Monthly Cost (est.)
+  ─────────────────────────────────────────────
+  6          6 dedicated      ~$150–$220
+  10         10 dedicated     ~$250–$370
+  15         15 dedicated     ~$370–$550
+
+- No shared-host risk — strongest hardware isolation.
+- On-demand scheduling reduces idle cost vs always-on clusters.
+- Cost scales linearly with tenants — no economy of scale.
+- Reserved instance pricing can reduce costs by 30–40%.
+
+──────────────────────────────────────────────────────────────────────
+6.4 COSMOS DBT + ASTRONOMER
+Fully managed SaaS: Astronomer hosts orchestration; Cosmos dbt manages
+the dbt runtime. Pricing is usage-billed per DAG run / compute hour.
+
+  Tenants    Astronomer Plan           Est. Monthly Cost
+  ──────────────────────────────────────────────────────
+  1–6        Starter / Standard        ~$200–$400
+  7–12       Standard                  ~$350–$700
+  13–18      Standard / Enterprise     ~$600–$1,200+
+
+- Highest per-run cost at low volume — offset by near-zero infra ops.
+- Astronomer plan tier jumps introduce step-wise cost increases.
+- Vendor lock-in risk: migration requires re-platforming orchestration.
+- Best suited for teams prioritising speed-to-market over cost optimisation.
+
+═══════════════════════════════════════════════════════════════════════
+7. HYBRID OPTION (If Required)
+═══════════════════════════════════════════════════════════════════════
+
+A hybrid approach is possible and often used in practice:
+- ECS/EC2 Multitenant  → steady, predictable workloads (best unit economics)
+- Fargate              → burst workloads (elastic spikes / irregular tenants)
+- Cosmos + Astronomer  → rapid onboarding with zero infra investment
+- ECS/EC2 Single-tenant→ high-compliance tenants needing dedicated infra
+
+═══════════════════════════════════════════════════════════════════════
+8. DECISION CONSIDERATIONS (Neutral Checklist)
+═══════════════════════════════════════════════════════════════════════
+
+Question / Scenario                        Fargate     EC2 Multi   EC2 Single  Cosmos+Astro
+────────────────────────────────────────────────────────────────────────────────────────────
+Workloads are bursty / unpredictable       ✓           ✗           ✗           ✓
+Workloads are steady / high frequency      ✗           ✓           ◑           ◑
+Minimal infra operations preferred         ✓           ✗           ◑           ✓✓
+Deep host-level control / caching needed   ✗           ✓           ✓           ✗
+Strong tenant isolation required           ✓           ✗           ✓✓          ✓
+Tenant count growing significantly (>10)   ◑           ✓           ✗           ◑
+Cost predictability is critical            ◑           ✓           ◑           ✗
+Team has limited DevOps expertise          ◑           ✗           ◑           ✓✓
+High regulatory / compliance requirements  ✓           ◑           ✓✓          ◑
+
+✓✓ = Strongly preferred   ✓ = Preferred   ◑ = Acceptable   ✗ = Not recommended
+
+═══════════════════════════════════════════════════════════════════════
+9. SECURITY & ISOLATION — Quantified Validation (POC)
+═══════════════════════════════════════════════════════════════════════
+
+Dimension                       Fargate      EC2 Multi    EC2 Single      Cosmos+Astro
+────────────────────────────────────────────────────────────────────────────────────────
+Cross-tenant access incidents   0            0            0               0 (vendor)
+IAM roles per tenant            Yes          Yes          Yes             Yes
+KMS isolation                   Per-tenant   Per-tenant   Per-tenant      Vendor-managed
+                                                          (dedicated)
+S3 / Glue boundaries            Enforced     Enforced     Enforced        Enforced
+Shared host risk                Low          Higher       None            None (SaaS)
+
+- Isolation strength is comparable when policies are correctly applied.
+- Single-tenant EC2 eliminates shared host risk by design.
+- Cosmos + Astronomer isolation depends on vendor SOC 2 / ISO 27001 certs.
+
+═══════════════════════════════════════════════════════════════════════
+10. KEY ASSUMPTIONS & SENSITIVITY
+═══════════════════════════════════════════════════════════════════════
+
+Costs and performance are sensitive to:
+- Actual average runtime (30 vs 90 minutes changes totals materially)
+- Task size (vCPU/memory) and concurrency peaks
+- EC2 instance family/size, autoscaling, and utilisation %
+- Astronomer plan tier and included compute hours
+- Retries/reruns frequency
+- Non-compute costs: logging, storage, NAT/egress, ECR pulls
+- Reserved vs on-demand EC2 pricing (30–40% savings with reservations)
+
+═══════════════════════════════════════════════════════════════════════
+11. NEUTRAL CONCLUSION
+═══════════════════════════════════════════════════════════════════════
+
+Under the stated baseline assumptions (6 tenants, ~360 runs/month,
+~45 mins/run), the four options differ primarily in billing model,
+operational overhead, and isolation posture:
+
+- Fargate-Only (~$260–$325/month): Best for bursty/unpredictable
+  workloads; lowest infra ops; cost scales linearly with usage.
+
+- Multitenant ECS/EC2 (~$95–$110/month): Best unit economics at scale
+  (9+ tenants); requires highest infra investment; shared host risk.
+
+- Single-tenant ECS/EC2 (~$150–$220/month): Strongest isolation without
+  shared host risk; cost scales linearly per tenant; no economy of scale.
+
+- Cosmos dbt + Astronomer (~$200–$400/month): Highest per-run cost at
+  current volume; lowest operational overhead; introduces vendor
+  dependency; best for rapid time-to-market.
+
+Recommendation framing: No single option dominates across all dimensions.
+The preferred architecture depends on the organisation's priorities across
+cost, isolation, operational capacity, and growth trajectory. A hybrid
+model may be optimal as tenant count grows beyond 10.
+
+This document is intended as a neutral input to the architecture and
+finance discussion. Final decisions should incorporate non-compute costs,
+regulatory requirements, and team capability assessments.
+
+──────────────────────────────────────────────────────────────────────
+Risk Finance & Treasury | Last Updated: March 31, 2026 | CONFIDENTIAL
+──────────────────────────────────────────────────────────────────────
