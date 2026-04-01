@@ -1,0 +1,84 @@
+Here’s the management brief in text:
+
+CONFIDENTIAL  |  DBT Infrastructure Decision Brief  |  Risk Finance & Treasury  |  April 2026
+══════════════════════════════════════════════════════════════════════════════════════════════
+
+        DBT INFRASTRUCTURE: COMPUTE EXECUTION DECISION BRIEF
+        Prepared for Senior Management  |  April 2026  |  Risk Finance & Treasury
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+CONTEXT
+──────────────────────────────────────────────────────────────────────────────────────────────
+We are evaluating how to run dbt workloads for 6 tenants (~360 jobs/month, 45 min avg).
+Four options have been assessed on cost, operational effort, and risk. This brief presents
+the key trade-offs to inform a go-forward decision.
+
+══════════════════════════════════════════════════════════════════════════════════════════════
+1. COST AT A GLANCE  (6 Tenants, 360 Jobs/Month Baseline)
+══════════════════════════════════════════════════════════════════════════════════════════════
+
+                          Fargate        EC2 Multitenant   EC2 Single-tenant   Cosmos+Astronomer
+                          ───────────    ───────────────   ─────────────────   ─────────────────
+Monthly cost (baseline)   $260–$325      $95–$110 ✓        $150–$220           $200–$400
+Monthly cost (15 tenants) $645–$810 ✗    $145–$180 ✓       $350–$500           $500–$900+ ✗
+Cost per job              $0.72–$0.90    ~$0.30 ✓          ~$0.50              $0.55–$1.10
+Cost as tenants grow      Rises linearly Step-wise         Rises linearly      Step-wise (tiers)
+Idle cost (no jobs)       ~$0 ✓          EC2 runs 24×7 ⚠   ~$0 ✓               ~$0 ✓
+
+══════════════════════════════════════════════════════════════════════════════════════════════
+2. KEY TRADE-OFFS
+══════════════════════════════════════════════════════════════════════════════════════════════
+
+                            Fargate          EC2 Multitenant          EC2 Single-tenant       Cosmos+Astronomer
+                            ───────────      ───────────────          ─────────────────       ─────────────────
+Infra management            Low ✓            High — team manages       Medium                  None — fully
+                                             EC2, patching, capacity ✗                         vendor-managed ✓
+
+Tenant data isolation       Strong           Moderate —                Strongest —             Strong
+                            (task-level)     shared host risk ⚠        dedicated host ✓        (vendor-enforced)
+
+Startup speed               30–90 sec ⚠      < 10 sec (warm) ✓         < 10 sec (warm) ✓       ~15–30 sec ⚠
+
+Scales beyond 10 tenants?   Yes — cost       Best unit economics ✓     Yes — no savings        Yes — plan
+                            rises ⚠                                    at scale ⚠              costs jump ⚠
+
+Vendor / lock-in risk       AWS only ✓       AWS only ✓                AWS only ✓              AWS + Astronomer ⚠
+                                                                                                (dual vendor)
+
+══════════════════════════════════════════════════════════════════════════════════════════════
+3. WHICH OPTION FITS WHICH SCENARIO?
+══════════════════════════════════════════════════════════════════════════════════════════════
+
+If the priority is…                      Best option                Why
+────────────────────────────────────────────────────────────────────────────────────────────
+Lowest cost today (6 tenants)            ECS/EC2 Multitenant        Shared capacity = lowest $/job at current scale
+Lowest cost at scale (15+ tenants)       ECS/EC2 Multitenant        Step-wise EC2 far cheaper than linear Fargate
+Minimal IT / DevOps overhead             Cosmos dbt + Astronomer     Fully managed; no infra to maintain
+Strongest tenant data isolation          ECS/EC2 Single-tenant      Dedicated host eliminates shared-infra risk
+Fastest time to production / pilot       Fargate or Cosmos          No cluster setup; deploy in hours
+
+══════════════════════════════════════════════════════════════════════════════════════════════
+4. BOTTOM LINE
+══════════════════════════════════════════════════════════════════════════════════════════════
+
+No single option is best on every dimension.
+The decision hinges on three questions:
+
+  1. How important is cost efficiency at scale?
+     → ECS/EC2 Multitenant wins clearly above 9 tenants.
+
+  2. How much infra management capacity does the team have?
+     → Low capacity favours Fargate or Cosmos.
+
+  3. Are there regulatory requirements for dedicated tenant infrastructure?
+     → Single-tenant EC2 is the safest choice.
+
+HYBRID OPTION (recommended if priorities differ across tenants):
+  • Standard tenants       → ECS/EC2 Multitenant  (cost-efficient)
+  • High-compliance tenants→ ECS/EC2 Single-tenant (dedicated infra)
+  • Burst / new onboarding → Fargate or Cosmos     (fast, zero setup)
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+For internal management review only.
+Costs are estimates based on POC assumptions and subject to change.
+──────────────────────────────────────────────────────────────────────────────────────────────
