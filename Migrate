@@ -1,0 +1,190 @@
+================================================================
+DBT ON ECS: MIGRATION GUIDE
+EC2 to Fargate
+================================================================
+Version: 1.0 (POC)
+Status: Draft
+
+----------------------------------------------------------------
+OVERVIEW
+----------------------------------------------------------------
+This document describes the migration path for tenants moving
+their DBT workloads from ECS EC2 to ECS Fargate.
+
+The migration has been designed to minimize tenant effort.
+Most infrastructure changes are handled transparently by the
+platform team via updated Service Catalog products.
+
+----------------------------------------------------------------
+CURRENT STATE (ECS EC2)
+----------------------------------------------------------------
+Each tenant provisions a Service Catalog product which creates:
+
+  - State Machine (Step Functions)
+  - ECS Task IAM Role
+  - SM IAM Role
+  - ECS Log Group
+  - SM Log Group
+  - ECS Cluster
+  - Auto Scaling Group (launches EC2 instance)
+  - KMS Policies
+  - Task Definition (SSM)
+
+Tenants trigger DBT runs via Step Functions, which calls
+ECS RunTask on the provisioned EC2-backed cluster.
+
+----------------------------------------------------------------
+FUTURE STATE (ECS FARGATE)
+----------------------------------------------------------------
+Each tenant provisions an updated Service Catalog product
+which creates:
+
+  - State Machine (Step Functions)
+  - ECS Task IAM Role
+  - SM IAM Role
+  - ECS Log Group
+  - SM Log Group
+  - KMS Policies
+  - Task Definition (SSM) — Fargate compatible
+  - Execution Role (pulls ECR image)
+
+REMOVED:
+  - ECS Cluster (no longer needed)
+  - Auto Scaling Group (no longer needed)
+  - EC2 Instance (no longer needed)
+
+ADDED:
+  - ECR Sync product dependency (one-time prerequisite)
+
+----------------------------------------------------------------
+WHAT CHANGES FOR TENANTS
+----------------------------------------------------------------
+Minimal impact. Summary of delta:
+
+  1. ECR Sync Product (NEW - one-time action)
+     Tenants must run the ECR Sync Service Catalog product
+     before migration. This pulls the DBT image from Nexus
+     into the local ECR repository.
+     This is a one-time step per tenant.
+
+  2. Service Catalog Product (UPDATED)
+     Tenants provision the updated Fargate-flavored product
+     instead of the EC2 one. The provisioning experience
+     is the same.
+
+NOTHING ELSE CHANGES for the tenant.
+
+----------------------------------------------------------------
+WHAT DOES NOT CHANGE FOR TENANTS
+----------------------------------------------------------------
+  - How they trigger DBT runs (Step Functions, same interface)
+  - Subnets (already passed as input parameters, unchanged)
+  - Security Groups (Border Control SG is attached
+    automatically at product provisioning time)
+  - IAM role provisioning (handled by platform)
+  - Logging setup (same log group structure)
+  - KMS policies
+
+----------------------------------------------------------------
+PREREQUISITES FOR MIGRATION
+----------------------------------------------------------------
+Before a tenant can migrate, the following must be in place:
+
+  [ ] ECR Sync Service Catalog product is available
+  [ ] Tenant has run the ECR Sync product successfully
+      and DBT image is confirmed in local ECR
+  [ ] Updated Fargate Service Catalog product is published
+      and available in tenant's Service Catalog portfolio
+  [ ] Subnets are confirmed and available as input parameters
+  [ ] Border Control Security Group is confirmed and will
+      be attached at provisioning time
+
+----------------------------------------------------------------
+MIGRATION STEPS (PER TENANT)
+----------------------------------------------------------------
+Step 1 — Run ECR Sync Product
+  - Launch the ECR Sync Service Catalog product
+  - Provide the Nexus image reference as parameter
+  - Confirm DBT image is successfully synced to ECR
+  - This is a one-time action
+
+Step 2 — Provision New Fargate Service Catalog Product
+  - Deprovision the existing EC2 Service Catalog product
+    (or keep running in parallel during validation)
+  - Launch the updated Fargate Service Catalog product
+  - Input parameters remain the same:
+      * TaskDefinitionSSM
+      * SyncNexusImage = True
+      * Subnets (existing values, no change)
+  - Security Group is attached automatically
+
+Step 3 — Validate
+  - Trigger a DBT run via Step Functions
+  - Confirm Fargate task launches successfully
+  - Confirm DBT execution completes
+  - Confirm logs are available in ECS Log Group
+  - Confirm no errors in State Machine execution
+
+Step 4 — Decommission EC2 Resources (post validation)
+  - Deprovision old EC2 Service Catalog product
+    if kept running in parallel
+  - Confirm ASG and EC2 instance are terminated
+  - Confirm no orphaned resources remain
+
+----------------------------------------------------------------
+FARGATE TASK RUNTIME BEHAVIOR
+----------------------------------------------------------------
+When a DBT run is triggered on Fargate:
+
+  1. Step Functions invokes ECS RunTask via SM IAM Role
+  2. ECS validates the Task Definition
+  3. Fargate provisions isolated compute with:
+       - Dedicated ENI (Elastic Network Interface)
+       - CPU and memory as defined in task definition
+       - Attached to tenant subnets
+       - Border Control Security Group applied
+  4. Execution Role assumes permissions and pulls
+     DBT image from local ECR
+  5. DBT execution begins
+  6. Task terminates on completion (no persistent instance)
+
+----------------------------------------------------------------
+KEY BENEFITS OF FARGATE FOR TENANTS
+----------------------------------------------------------------
+  - No EC2 instance to manage or patch
+  - No Auto Scaling Group configuration
+  - Fully isolated compute per DBT run
+  - Pay per execution (no idle instance cost)
+  - No networking burden on tenant side
+
+----------------------------------------------------------------
+KNOWN LIMITATIONS (POC SCOPE)
+----------------------------------------------------------------
+  - This migration guide is based on POC findings
+  - Border Control SG used for POC — production SG
+    strategy to be confirmed
+  - Full load and performance testing not yet completed
+  - Rollback plan: tenants can revert to EC2 product
+    if issues are found post migration
+
+----------------------------------------------------------------
+ROLLBACK PLAN
+----------------------------------------------------------------
+If issues are found post migration:
+
+  1. Re-provision the EC2 Service Catalog product
+  2. Verify EC2 cluster and ASG are back in place
+  3. Trigger a test DBT run on EC2 to confirm
+  4. Raise findings with platform team before
+     reattempting Fargate migration
+
+----------------------------------------------------------------
+SUPPORT
+----------------------------------------------------------------
+For migration support or questions, contact the platform team.
+All infrastructure changes are owned by the platform team.
+Tenants are only responsible for Steps 1 and 2 above.
+
+================================================================
+END OF DOCUMENT
+================================================================
