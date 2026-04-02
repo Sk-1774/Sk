@@ -1,0 +1,38 @@
+DBT on ECS Fargate — Development & Migration Timeline
+
+
+
+|# |Task                            |Description                                                                                 |Dependencies      |Effort Estimate|
+|--|--------------------------------|--------------------------------------------------------------------------------------------|------------------|---------------|
+|1 |CFT for ECS Cluster             |Move ECS Cluster creation from console to CloudFormation template                           |None              |3-4 days       |
+|2 |Add SM Log Group to CFT         |SM Log Group was skipped in POC, add to stack                                               |Task 1            |1-2 days       |
+|3 |Add Alation SG to CFT           |Security Group for Alation not yet created, add to stack                                    |Task 1            |1-2 days       |
+|4 |Migrate Stack to S3 + SC Product|Create proper SC product in Datalake portfolio, replace manual S3 upload process            |Tasks 1,2,3       |4-5 days       |
+|5 |Deploy SC Product in POC Account|Deploy the new product in POC account, validate all resources are provisioned correctly     |Task 4            |2-3 days       |
+|6 |End to End Testing in POC       |Trigger DBT run, check logs, verify SM execution, validate all resources created correctly  |Task 5            |4-5 days       |
+|7 |QA Testing in POC               |Formal QA pass on all resources, IAM roles, networking, task execution in POC               |Task 6            |3-4 days       |
+|8 |Bug Fix Buffer — POC            |Address any gaps or bugs found during POC testing and QA                                    |Tasks 6,7         |4-5 days       |
+|9 |Test Alation on Fargate         |Alation has not been tested on Fargate at all, run initial validation in POC environment    |Task 6            |4-5 days       |
+|10|Test DQ on Fargate (Basic)      |Basic DQ testing on Fargate in POC environment by platform team                             |Task 6            |3-4 days       |
+|11|ECR Sync Product Validation     |Confirm ECR Sync product works correctly per tenant before handoff                          |Task 8            |2-3 days       |
+|12|IAM Permission Review           |Audit all task and execution role permissions for Fargate awsvpc compatibility              |Task 8            |2-3 days       |
+|13|Deploy SC Product in DEV Region |Once POC testing and QA passes, deploy SC product in DEV region                             |Tasks 8,9,10,11,12|2-3 days       |
+|14|End to End Testing in DEV       |Full end to end validation in DEV environment by platform team                              |Task 13           |4-5 days       |
+|15|QA Testing in DEV               |Formal QA pass in DEV region, validate parity with POC results                              |Task 14           |3-4 days       |
+|16|Bug Fix Buffer — DEV            |Address any issues found during DEV testing and QA                                          |Tasks 14,15       |4-5 days       |
+|17|Tagging & Cost Allocation Review|Enforce consistent tagging strategy across all SC product resources for tenant cost tracking|Task 13           |2-3 days       |
+|18|Handoff to DBTX Team            |Provide SC product to DBTX team, share onboarding doc and runbook                           |Tasks 15,16       |1-2 days       |
+|19|DBTX DQ End to End in POC       |DBTX team runs full DQ end to end validation in POC environment                             |Task 18           |5-7 days       |
+|20|DBTX QA Sign Off in POC         |DBTX team QA sign off on POC results before proceeding to DEV                               |Task 19           |3-4 days       |
+|21|DBTX DQ End to End in DEV       |DBTX team runs full DQ end to end validation in DEV environment                             |Task 20           |5-7 days       |
+|22|DBTX QA Sign Off in DEV         |DBTX team QA sign off on DEV results                                                        |Task 21           |3-4 days       |
+|23|Tenant Onboarding Doc Finalized |Finalize migration guide and runbook based on all testing findings                          |Task 22           |2-3 days       |
+|24|Production Readiness Review     |Review all test results across POC and DEV, document open items, get stakeholder sign off   |Task 23           |3-4 days       |
+
+Rough Total Estimate: 14-18 weeks accounting for QA cycles, bug fix buffers, and DBTX team dependency windows.
+
+Key Risk Callouts:
+	∙	Tasks 9 and 10 (Alation + DQ) can run in parallel with each other to save time
+	∙	Tasks 11 and 12 can also run in parallel
+	∙	Biggest timeline risk is DBTX team availability at Tasks 19-22 — align early
+	∙	Bug fix buffers (Tasks 8 and 16) could expand if Alation on Fargate has networking issues given it hasn’t been tested at all yet​​​​​​​​​​​​​​​​
