@@ -1,0 +1,118 @@
+I have an Excel file called [YOUR_FILE_NAME].xlsx in the current directory.
+Read it and do the following:
+
+STEP 1 - READ THE FILE
+Use Python with openpyxl and pandas to read the file.
+Extract all rows from all sheets using these exact column names:
+- Step ID
+- Test Scenario
+- Action Performed
+- Input/Configuration
+- Expected Outcome
+- Actual Outcome
+- Result (Pass/Fail)
+- Observations/Errors
+- Follow Up Next Steps
+- Screenshots
+
+Handle these cases cleanly:
+- Skip completely empty rows
+- If Screenshots column has a value treat it as "Screenshot attached"
+- If any cell is NaN or empty replace with "N/A"
+- Count total tests, total passed, total failed
+
+STEP 2 - GENERATE DOCUMENT 1: QA PROOF DOCUMENT
+Create a formal Word document (.docx) saved as output/QA_Testing_Proof.docx
+
+Structure it exactly like this:
+
+Title: Quality Assurance Testing Report
+Subtitle: Testing Proof of Execution
+Date: [today's date]
+Prepared by: QA Team
+Status: [PASS if all passed, CONDITIONAL PASS if some failed, FAIL if majority failed]
+
+Section 1 - Executive Sign-Off Summary
+A table with:
+| Total Test Cases | Total Passed | Total Failed | Pass Rate | Overall Status |
+
+Section 2 - Test Coverage Overview
+Short paragraph summarising what was tested, what systems or 
+features were covered based on the test scenarios in the data.
+
+Section 3 - Detailed Test Results
+A full table with ALL rows from the Excel using these columns:
+Step ID | Test Scenario | Result | Observations/Errors | Follow Up Next Steps
+
+Section 4 - Failed Tests Detail
+Only show failed tests here with full detail:
+Step ID, Test Scenario, Action Performed, Input/Configuration,
+Expected Outcome, Actual Outcome, Observations/Errors, Follow Up Next Steps
+
+If no failures write: "All test cases passed successfully."
+
+Section 5 - Risk Assessment
+Based on the failed tests and observations, list potential risks.
+If no failures write: "No risks identified. All scenarios passed."
+
+Section 6 - Sign Off
+A formal sign-off table with empty fields for:
+QA Lead signature, Dev Lead signature, Date, Comments
+
+STEP 3 - GENERATE DOCUMENT 2: MANAGEMENT SUMMARY
+Create a Word document saved as output/Management_Summary.docx
+
+Structure it exactly like this:
+
+Title: Testing Summary Report
+Subtitle: Management Overview
+Date: [today's date]
+
+Section 1 - At a Glance
+3 sentence plain English summary of what was tested and the outcome.
+No technical jargon.
+
+Section 2 - Key Numbers
+A clean simple table:
+| What | Number |
+| Total Scenarios Tested | X |
+| Passed | X |
+| Failed | X |
+| Pass Rate | X% |
+| Pending Follow Up | X |
+
+Section 3 - What Was Tested
+Bullet points in plain English describing the test scenarios.
+No technical steps. Just what feature or flow was being verified.
+
+Section 4 - Key Findings
+- What worked well (based on passed tests)
+- What needs attention (based on failed tests and observations)
+- What needs follow up (based on Follow Up Next Steps column)
+
+Section 5 - Go / No-Go Recommendation
+A clear bold recommendation:
+GO - if pass rate is above 90%
+CONDITIONAL GO - if pass rate is 70-90% with explanation of conditions
+NO GO - if pass rate is below 70% with explanation
+
+Section 6 - Next Steps
+Numbered list of actions needed before or after release
+based strictly on the Follow Up Next Steps column data.
+
+STEP 4 - FORMAT BOTH DOCUMENTS PROPERLY
+For both Word documents:
+- Use professional fonts: Title in 20pt bold, headers in 14pt bold, 
+  body in 11pt
+- Add a thin border to all tables
+- Alternate row shading on tables (white and light grey)
+- Make PASS cells green, FAIL cells red in the results table
+- Add a page break between major sections
+- Add page numbers in the footer
+- Add the document title and date in the header
+
+STEP 5 - CONFIRM OUTPUT
+After saving both files print:
+"✅ QA_Testing_Proof.docx saved to output/"
+"✅ Management_Summary.docx saved to output/"
+"📊 Summary: X tests | X passed | X failed | X% pass rate"
